@@ -1,0 +1,6 @@
+node_modules/
+.env
+*.log
+dist/
+product_import_template.xlsx
+uploads/
