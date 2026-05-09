@@ -34,10 +34,14 @@ const {
   deleteVariant,
   regenerateBarcodeImages,
   getBarcodeImages,
+  billingSearch,
 } = require("../controller/Productcontroller");
 
 // All routes require authentication
 router.use(jwtVerify);
+
+// ─── Billing search (name + barcode in one endpoint) ─────────────────────────
+router.get("/billing/search", billingOrAdmin, billingSearch);
 
 // ─── Utility / filter routes ──────────────────────────────────────────────────
 router.get(

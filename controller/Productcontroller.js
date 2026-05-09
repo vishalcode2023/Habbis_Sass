@@ -713,3 +713,133 @@ exports.getBarcodeImages = async (req, res) => {
     return error(res, 500, err.message);
   }
 };
+
+// ─── Billing Search ───────────────────────────────────────────────────────────
+// GET /api/products/billing/search?q=shirt        → search by name
+// GET /api/products/billing/search?barcode=123456 → scan barcode
+//
+// Response shape (same for both modes):
+// { products: [ { productId, productName, category, unitType, gstPercent,
+//                 hasVariants, sellingPrice, stock,
+//                 variants: [{ variantId, size, color, colorCode, barcode, sellingPrice, stock }],
+//                 barcode, sku } ] }
+
+exports.billingSearch = async (req, res) => {
+  try {
+    const { q, barcode } = req.query;
+
+    if (!q && !barcode) {
+      return error(res, 400, "Provide either ?q=<name> or ?barcode=<code>");
+    }
+
+    // ── Barcode mode ──────────────────────────────────────────────────────────
+    if (barcode) {
+      let product = await Product.findOne({
+        barcode: barcode.trim(),
+        isActive: true,
+      }).lean({ virtuals: true });
+      let matchedVariant = null;
+
+      if (!product) {
+        // Try variant-level barcode
+        product = await Product.findOne({
+          "variants.barcode": barcode.trim(),
+          isActive: true,
+        }).lean({ virtuals: true });
+
+        if (product) {
+          matchedVariant = product.variants.find(
+            (v) => v.barcode === barcode.trim() && v.isActive,
+          );
+        }
+      }
+
+      if (!product) return error(res, 404, "No product found for this barcode");
+
+      const shaped = shapeBillingProduct(product);
+      shaped.matchedVariant = matchedVariant
+        ? shapeVariant(matchedVariant)
+        : null;
+
+      return success(res, 200, "Product found", { products: [shaped] });
+    }
+
+    // ── Name / text search mode ───────────────────────────────────────────────
+    const trimmed = q.trim();
+    if (trimmed.length < 1) return error(res, 400, "Search term too short");
+
+    // Use text index if available, fallback to regex
+    let filter = { isActive: true };
+    const hasTextIndex = true; // productSchema has text index on productName, supplierName, category
+    if (hasTextIndex) {
+      filter.$text = { $search: trimmed };
+    } else {
+      filter.productName = new RegExp(trimmed, "i");
+    }
+
+    const products = await Product.find(filter)
+      .sort(
+        hasTextIndex ? { score: { $meta: "textScore" } } : { productName: 1 },
+      )
+      .limit(20)
+      .lean({ virtuals: true });
+
+    // If text search returns nothing, fall back to regex
+    let results = products;
+    if (!results.length) {
+      results = await Product.find({
+        isActive: true,
+        productName: new RegExp(trimmed, "i"),
+      })
+        .sort({ productName: 1 })
+        .limit(20)
+        .lean({ virtuals: true });
+    }
+
+    return success(res, 200, "Products found", {
+      products: results.map(shapeBillingProduct),
+      total: results.length,
+    });
+  } catch (err) {
+    return error(res, 500, err.message);
+  }
+};
+
+// ─── Internal shape helpers ───────────────────────────────────────────────────
+
+function shapeBillingProduct(p) {
+  return {
+    productId: p._id,
+    productName: p.productName,
+    category: p.category,
+    subCategory: p.subCategory,
+    sku: p.sku,
+    barcode: p.barcode,
+    unitType: p.unitType,
+    gstPercent: p.gstPercent,
+    hsnCode: p.hsnCode,
+    hasVariants: !!(p.variants && p.variants.length),
+    // Product-level pricing & stock (used when no variants)
+    sellingPrice: p.pricing?.sellingPrice,
+    wholesalePrice: p.pricing?.wholesalePrice,
+    purchasePrice: p.pricing?.purchasePrice,
+    stock: p.stock?.quantity ?? 0,
+    minimumStock: p.minimumStock,
+    // Active variants only
+    variants: (p.variants || []).filter((v) => v.isActive).map(shapeVariant),
+  };
+}
+
+function shapeVariant(v) {
+  return {
+    variantId: v._id,
+    size: v.size,
+    color: v.color,
+    colorCode: v.colorCode,
+    sku: v.sku,
+    barcode: v.barcode,
+    sellingPrice: v.pricing?.sellingPrice,
+    wholesalePrice: v.pricing?.wholesalePrice,
+    stock: v.stock?.quantity ?? 0,
+  };
+}

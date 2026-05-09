@@ -246,7 +246,7 @@ productSchema.index({ "stock.quantity": 1 });
 productSchema.index({ createdAt: -1 });
 productSchema.index({ availableSizes: 1 });
 productSchema.index({ availableColors: 1 });
-productSchema.index({ "variants.barcode": 1 });
+
 productSchema.index({ "variants.sku": 1 });
 productSchema.index({ "variants.color": 1 });
 productSchema.index({ "variants.size": 1 });
