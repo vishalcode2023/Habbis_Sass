@@ -1,5 +1,31 @@
 const Joi = require("joi");
 
+// ─── Variant schema ───────────────────────────────────────────────────────────
+const variantSchema = Joi.object({
+  size: Joi.string().trim().uppercase().max(30).optional().allow(""),
+  color: Joi.string().trim().max(50).optional().allow(""),
+  colorCode: Joi.string()
+    .trim()
+    .pattern(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/)
+    .optional()
+    .allow("")
+    .messages({
+      "string.pattern.base": "colorCode must be a valid hex e.g. #FF0000",
+    }),
+  sku: Joi.string().trim().uppercase().max(50).optional().allow(""),
+  barcode: Joi.string().trim().optional().allow(""),
+  stock: Joi.object({
+    quantity: Joi.number().min(0).default(0),
+  }).optional(),
+  pricing: Joi.object({
+    purchasePrice: Joi.number().min(0).optional(),
+    sellingPrice: Joi.number().min(0).optional(),
+    wholesalePrice: Joi.number().min(0).optional(),
+  }).optional(),
+  isActive: Joi.boolean().default(true),
+});
+
+// ─── Product schema ───────────────────────────────────────────────────────────
 const productSchema = Joi.object({
   productName: Joi.string().trim().min(2).max(150).required().messages({
     "any.required": "Product name is required",
@@ -12,9 +38,26 @@ const productSchema = Joi.object({
   sku: Joi.string().trim().uppercase().max(50).optional().allow(""),
   hsnCode: Joi.string().trim().max(20).optional().allow(""),
   unitType: Joi.string().valid("PCS", "MTR", "CUT", "ROLL").default("PCS"),
+
+  // Size & Color master lists
+  availableSizes: Joi.array()
+    .items(Joi.string().trim().uppercase().max(30))
+    .optional()
+    .messages({ "array.base": "availableSizes must be an array of strings" }),
+  availableColors: Joi.array()
+    .items(Joi.string().trim().max(50))
+    .optional()
+    .messages({ "array.base": "availableColors must be an array of strings" }),
+
+  // Variants
+  variants: Joi.array().items(variantSchema).optional(),
+
+  // Product-level stock (ignored when variants are used)
   stock: Joi.object({
     quantity: Joi.number().min(0).default(0),
   }).optional(),
+
+  // Product-level pricing (required — acts as default for variants too)
   pricing: Joi.object({
     purchasePrice: Joi.number().min(0).required().messages({
       "any.required": "Purchase price is required",
@@ -24,6 +67,7 @@ const productSchema = Joi.object({
     }),
     wholesalePrice: Joi.number().min(0).optional(),
   }).required(),
+
   gstPercent: Joi.number().valid(0, 5, 12, 18, 28).default(5),
   supplierName: Joi.string().trim().max(150).optional().allow(""),
   minimumStock: Joi.number().min(0).default(10),
@@ -51,6 +95,9 @@ const stockOperationSchema = Joi.object({
   productId: Joi.string().hex().length(24).required().messages({
     "any.required": "Product ID is required",
   }),
+  variantId: Joi.string().hex().length(24).optional().messages({
+    "string.hex": "variantId must be a valid ObjectId",
+  }),
   quantity: Joi.number().integer().min(1).required().messages({
     "any.required": "Quantity is required",
     "number.min": "Quantity must be at least 1",
@@ -67,11 +114,25 @@ const paginationSchema = Joi.object({
   category: Joi.string().trim().optional().allow(""),
   supplierName: Joi.string().trim().optional().allow(""),
   unitType: Joi.string().valid("PCS", "MTR", "CUT", "ROLL").optional(),
+  size: Joi.string().trim().uppercase().optional().allow(""),
+  color: Joi.string().trim().optional().allow(""),
   sortBy: Joi.string()
     .valid("productName", "createdAt", "stock.quantity", "pricing.sellingPrice")
     .default("createdAt"),
   sortOrder: Joi.string().valid("asc", "desc").default("desc"),
 });
+
+// ─── Variant add/update schemas ───────────────────────────────────────────────
+const addVariantSchema = Joi.object({
+  variants: Joi.array().items(variantSchema).min(1).required().messages({
+    "any.required": "variants array is required",
+    "array.min": "At least one variant is required",
+  }),
+});
+
+const updateVariantSchema = variantSchema.fork(["size", "color"], (field) =>
+  field.optional(),
+);
 
 module.exports = {
   productSchema,
@@ -79,4 +140,6 @@ module.exports = {
   bulkProductSchema,
   stockOperationSchema,
   paginationSchema,
+  addVariantSchema,
+  updateVariantSchema,
 };

@@ -3,15 +3,17 @@ const router = express.Router();
 
 const jwtVerify = require("../middleware/jwtVerify");
 const { adminOnly, billingOrAdmin } = require("../middleware/Rolemiddleware");
-const validate = require("../middleware/validate");
-const { uploadProductImages, uploadExcel } = require("../config/cloudinary");
+const validate = require("../middleware/Validate");
+const { uploadProductImages, uploadExcel } = require("../config/Cloudinary");
 
 const {
   productSchema,
   updateProductSchema,
   bulkProductSchema,
   paginationSchema,
-} = require("../validations/productValidation");
+  addVariantSchema,
+  updateVariantSchema,
+} = require("../validations/Productvalidation");
 
 const {
   addProduct,
@@ -25,12 +27,19 @@ const {
   getLowStockProducts,
   excelBulkImport,
   getCategories,
-} = require("../controller/productController");
+  getSizes,
+  getColors,
+  addVariants,
+  updateVariant,
+  deleteVariant,
+  regenerateBarcodeImages,
+  getBarcodeImages,
+} = require("../controller/Productcontroller");
 
 // All routes require authentication
 router.use(jwtVerify);
 
-// ─── Utility / special routes (before :id to avoid conflicts) ────────────────
+// ─── Utility / filter routes ──────────────────────────────────────────────────
 router.get(
   "/low-stock",
   billingOrAdmin,
@@ -39,8 +48,10 @@ router.get(
 );
 router.get("/barcode/:barcode", billingOrAdmin, searchByBarcode);
 router.get("/categories", billingOrAdmin, getCategories);
+router.get("/sizes", billingOrAdmin, getSizes);
+router.get("/colors", billingOrAdmin, getColors);
 
-// ─── Bulk routes ──────────────────────────────────────────────────────────────
+// ─── Bulk ─────────────────────────────────────────────────────────────────────
 router.post(
   "/bulk",
   adminOnly,
@@ -49,7 +60,7 @@ router.post(
 );
 router.post("/bulk-import", adminOnly, uploadExcel, excelBulkImport);
 
-// ─── CRUD ─────────────────────────────────────────────────────────────────────
+// ─── Product CRUD ─────────────────────────────────────────────────────────────
 router.post(
   "/",
   adminOnly,
@@ -75,5 +86,26 @@ router.delete("/:id", adminOnly, deleteProduct);
 
 // ─── Image management ─────────────────────────────────────────────────────────
 router.delete("/:id/images/:publicId", adminOnly, deleteProductImage);
+
+// ─── Variant management ───────────────────────────────────────────────────────
+router.post(
+  "/:id/variants",
+  adminOnly,
+  validate(addVariantSchema),
+  addVariants,
+);
+router.put(
+  "/:id/variants/:variantId",
+  adminOnly,
+  validate(updateVariantSchema),
+  updateVariant,
+);
+router.delete("/:id/variants/:variantId", adminOnly, deleteVariant);
+
+// ─── Barcode image routes ─────────────────────────────────────────────────────
+// GET  /api/products/:id/barcodes          → fetch all barcode image URLs
+// POST /api/products/:id/barcodes/regenerate → re-generate & re-upload images
+router.get("/:id/barcodes", billingOrAdmin, getBarcodeImages);
+router.post("/:id/barcodes/regenerate", adminOnly, regenerateBarcodeImages);
 
 module.exports = router;
