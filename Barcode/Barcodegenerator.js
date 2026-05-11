@@ -7,9 +7,10 @@
  */
 const generateBarcode = () => {
   const prefix = "890"; // India GS1 prefix
-  const timestamp = Date.now().toString().slice(-7);
-  const random = Math.floor(10 + Math.random() * 90).toString(); // 2 digits
-  const body = prefix + timestamp + random; // 12 digits
+  // 9 fully random digits — avoids timestamp collisions during bulk inserts
+  // (all products map() at the same millisecond, same timestamp = same barcode)
+  const random = Math.floor(100000000 + Math.random() * 900000000).toString(); // 9 digits
+  const body = prefix + random; // 12 digits
 
   const checkDigit = computeEAN13Check(body);
   return body + checkDigit;

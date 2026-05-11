@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const Product = require("../model/Product");
-const SalesInvoice = require("../model/SalesInvoice");
-const StockLedger = require("../model/StockLedger");
+const SalesInvoice = require("../model/Salesinvoice");
+const StockLedger = require("../model/Stockledger");
 const { success, error } = require("../utils/Apiresponse");
 const { getPagination, buildMeta } = require("../utils/Pagination");
 
@@ -31,83 +31,59 @@ const generateInvoiceNo = async () => {
 
 // ─── Internal: deduct stock (variant-aware) ───────────────────────────────────
 
-const deductStock = async (
-  session,
-  { product, variantId, quantity, invoiceNo, unitPrice, note, userId },
-) => {
+const deductStock = async ({
+  product,
+  variantId,
+  quantity,
+  invoiceNo,
+  unitPrice,
+  note,
+  userId,
+}) => {
   if (variantId) {
-    // Variant-level stock
     const variant = product.variants.id(variantId);
     if (!variant)
       throw new Error(`Variant not found in product "${product.productName}"`);
 
     const before = variant.stock.quantity;
-    if (before < quantity) {
-      throw new Error(
-        `Insufficient stock for "${product.productName}" (${variant.size || ""} ${variant.color || ""}). Available: ${before}, Requested: ${quantity}`,
-      );
-    }
     variant.stock.quantity = before - quantity;
-    await product.save({ session });
+    await product.save();
 
-    await StockLedger.create(
-      [
-        {
-          productId: product._id,
-          type: "SALE",
-          quantity: -quantity,
-          quantityBefore: before,
-          quantityAfter: before - quantity,
-          invoiceNo,
-          unitPrice,
-          totalValue: unitPrice
-            ? +(quantity * unitPrice).toFixed(2)
-            : undefined,
-          note,
-          createdBy: userId,
-        },
-      ],
-      { session },
-    );
+    await StockLedger.create({
+      productId: product._id,
+      type: "SALE",
+      quantity: -quantity,
+      quantityBefore: before,
+      quantityAfter: before - quantity,
+      invoiceNo,
+      unitPrice,
+      totalValue: unitPrice ? +(quantity * unitPrice).toFixed(2) : undefined,
+      note,
+      createdBy: userId,
+    });
   } else {
-    // Product-level stock
     const before = product.stock.quantity;
-    if (before < quantity) {
-      throw new Error(
-        `Insufficient stock for "${product.productName}". Available: ${before}, Requested: ${quantity}`,
-      );
-    }
     product.stock.quantity = before - quantity;
-    await product.save({ session });
+    await product.save();
 
-    await StockLedger.create(
-      [
-        {
-          productId: product._id,
-          type: "SALE",
-          quantity: -quantity,
-          quantityBefore: before,
-          quantityAfter: before - quantity,
-          invoiceNo,
-          unitPrice,
-          totalValue: unitPrice
-            ? +(quantity * unitPrice).toFixed(2)
-            : undefined,
-          note,
-          createdBy: userId,
-        },
-      ],
-      { session },
-    );
+    await StockLedger.create({
+      productId: product._id,
+      type: "SALE",
+      quantity: -quantity,
+      quantityBefore: before,
+      quantityAfter: before - quantity,
+      invoiceNo,
+      unitPrice,
+      totalValue: unitPrice ? +(quantity * unitPrice).toFixed(2) : undefined,
+      note,
+      createdBy: userId,
+    });
   }
 };
 
 // ─── Create Sale (Billing) ────────────────────────────────────────────────────
 
 exports.createSale = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const {
       customerName = "Walk-in Customer",
@@ -116,46 +92,59 @@ exports.createSale = async (req, res) => {
       discountAmount = 0,
       paymentMode = "CASH",
       amountPaid = 0,
+      soldBy,
       notes,
       invoiceDate,
     } = req.body;
 
-    if (!items || !items.length) {
-      await session.abortTransaction();
+    if (!items || !items.length)
       return error(res, 400, "At least one item is required");
-    }
 
-    const invoiceNo = await generateInvoiceNo();
-
-    let subTotal = 0;
-    let totalGst = 0;
-    const enrichedItems = [];
-
+    // ── Pass 1: validate all products & stock BEFORE touching anything ────────
+    const resolved = [];
     for (const item of items) {
-      const product = await Product.findById(item.productId).session(session);
-      if (!product) {
-        await session.abortTransaction();
+      const product = await Product.findById(item.productId);
+      if (!product)
         return error(res, 404, `Product ${item.productId} not found`);
-      }
 
-      // Resolve pricing from variant or product level
       let resolvedPrice = item.unitPrice;
       let variantRef = null;
 
       if (item.variantId) {
         const variant = product.variants.id(item.variantId);
-        if (!variant) {
-          await session.abortTransaction();
+        if (!variant)
           return error(res, 404, `Variant ${item.variantId} not found`);
-        }
         variantRef = variant;
         if (!resolvedPrice)
           resolvedPrice =
             variant.pricing?.sellingPrice ?? product.pricing.sellingPrice;
+
+        if (variant.stock.quantity < item.quantity)
+          return error(
+            res,
+            422,
+            `Insufficient stock for "${product.productName}" (${variant.size || ""} ${variant.color || ""}). Available: ${variant.stock.quantity}, Requested: ${item.quantity}`,
+          );
       } else {
         if (!resolvedPrice) resolvedPrice = product.pricing.sellingPrice;
+        if (product.stock.quantity < item.quantity)
+          return error(
+            res,
+            422,
+            `Insufficient stock for "${product.productName}". Available: ${product.stock.quantity}, Requested: ${item.quantity}`,
+          );
       }
 
+      resolved.push({ product, variantRef, resolvedPrice, item });
+    }
+
+    // ── Pass 2: compute totals ────────────────────────────────────────────────
+    const invoiceNo = await generateInvoiceNo();
+    let subTotal = 0,
+      totalGst = 0;
+    const enrichedItems = [];
+
+    for (const { product, variantRef, resolvedPrice, item } of resolved) {
       const gstPct = item.gstPercent ?? product.gstPercent ?? 0;
       const itemDiscount = item.itemDiscount || 0;
       const baseAmount = +(item.quantity * resolvedPrice).toFixed(2);
@@ -183,56 +172,51 @@ exports.createSale = async (req, res) => {
         discountAmount: itemDiscount,
         totalAmount,
       });
+    }
 
-      // Deduct stock
-      await deductStock(session, {
+    // ── Pass 3: deduct stock + ledger ─────────────────────────────────────────
+    for (const { product, variantRef, resolvedPrice, item } of resolved) {
+      await deductStock({
         product,
-        variantId: item.variantId || null,
+        variantId: variantRef ? variantRef._id : null,
         quantity: item.quantity,
         invoiceNo,
         unitPrice: resolvedPrice,
         note: `Sale invoice ${invoiceNo}`,
-        userId: req.user._id,
+        userId: req.user.id,
       });
     }
 
+    // ── Pass 4: persist invoice ───────────────────────────────────────────────
     const totalAmount = +(subTotal + totalGst - discountAmount).toFixed(2);
     const change = +(amountPaid - totalAmount).toFixed(2);
 
-    const [invoice] = await SalesInvoice.create(
-      [
-        {
-          invoiceNo,
-          invoiceDate: invoiceDate || new Date(),
-          customerName,
-          customerPhone,
-          items: enrichedItems,
-          subTotal: +subTotal.toFixed(2),
-          gstAmount: +totalGst.toFixed(2),
-          discountAmount,
-          totalAmount,
-          amountPaid,
-          changeAmount: Math.max(0, change),
-          paymentMode,
-          notes,
-          status: "COMPLETED",
-          createdBy: req.user._id,
-        },
-      ],
-      { session },
-    );
+    const invoice = await SalesInvoice.create({
+      invoiceNo,
+      invoiceDate: invoiceDate || new Date(),
+      customerName,
+      customerPhone,
+      items: enrichedItems,
+      subTotal: +subTotal.toFixed(2),
+      gstAmount: +totalGst.toFixed(2),
+      discountAmount,
+      totalAmount,
+      amountPaid,
+      changeAmount: Math.max(0, change),
+      paymentMode,
+      soldBy: soldBy || undefined,
+      notes,
+      status: "COMPLETED",
+      createdBy: req.user.id,
+    });
 
-    await session.commitTransaction();
     return success(res, 201, "Sale created successfully", invoice);
   } catch (err) {
-    await session.abortTransaction();
     if (err.code === 11000)
       return error(res, 409, "Invoice number conflict, please retry");
-    if (err.message.includes("Insufficient"))
+    if (err.message?.includes("Insufficient"))
       return error(res, 422, err.message);
     return error(res, 500, err.message);
-  } finally {
-    session.endSession();
   }
 };
 
@@ -313,62 +297,57 @@ exports.getSaleByInvoiceNo = async (req, res) => {
 // ─── Cancel Sale ──────────────────────────────────────────────────────────────
 
 exports.cancelSale = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
   try {
-    const sale = await SalesInvoice.findById(req.params.id).session(session);
+    const sale = await SalesInvoice.findById(req.params.id);
     if (!sale) return error(res, 404, "Sale not found");
     if (sale.status === "CANCELLED")
       return error(res, 400, "Sale already cancelled");
 
     // Reverse stock for each item
     for (const item of sale.items) {
-      const product = await Product.findById(item.productId).session(session);
+      const product = await Product.findById(item.productId);
       if (!product) continue;
 
       if (item.variantId) {
         const variant = product.variants.id(item.variantId);
         if (variant) {
+          const before = variant.stock.quantity;
           variant.stock.quantity += item.quantity;
-          await product.save({ session });
-        }
-      } else {
-        product.stock.quantity += item.quantity;
-        await product.save({ session });
-      }
-
-      await StockLedger.create(
-        [
-          {
+          await product.save();
+          await StockLedger.create({
             productId: item.productId,
             type: "ADJUSTMENT",
             quantity: +item.quantity,
-            quantityBefore:
-              (item.variantId
-                ? product.variants.id(item.variantId)?.stock?.quantity
-                : product.stock.quantity) - item.quantity,
-            quantityAfter: item.variantId
-              ? product.variants.id(item.variantId)?.stock?.quantity
-              : product.stock.quantity,
+            quantityBefore: before,
+            quantityAfter: before + item.quantity,
             invoiceNo: sale.invoiceNo,
             note: `Reversal: cancelled sale ${sale.invoiceNo}`,
-            createdBy: req.user._id,
-          },
-        ],
-        { session },
-      );
+            createdBy: req.user.id,
+          });
+        }
+      } else {
+        const before = product.stock.quantity;
+        product.stock.quantity += item.quantity;
+        await product.save();
+        await StockLedger.create({
+          productId: item.productId,
+          type: "ADJUSTMENT",
+          quantity: +item.quantity,
+          quantityBefore: before,
+          quantityAfter: before + item.quantity,
+          invoiceNo: sale.invoiceNo,
+          note: `Reversal: cancelled sale ${sale.invoiceNo}`,
+          createdBy: req.user.id,
+        });
+      }
     }
 
     sale.status = "CANCELLED";
-    await sale.save({ session });
+    await sale.save();
 
-    await session.commitTransaction();
     return success(res, 200, "Sale cancelled and stock reversed");
   } catch (err) {
-    await session.abortTransaction();
     return error(res, 500, err.message);
-  } finally {
-    session.endSession();
   }
 };
 

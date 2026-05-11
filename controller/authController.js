@@ -7,7 +7,7 @@ const {
   changePasswordSchema,
 } = require("../Model/AuthModel");
 const RefreshToken = require("../Model/RefreshTokenSchema");
-const { createJwtToken } = require("../Middleware/JwtCreation");
+const { createToken: createJwtToken } = require("../Middleware/JwtCreation");
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 

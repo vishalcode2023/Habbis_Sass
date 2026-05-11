@@ -40,3 +40,5 @@ refreshTokenSchema.methods.isValid = function () {
 const RefreshToken =
   mongoose.models.RefreshToken ||
   mongoose.model("RefreshToken", refreshTokenSchema);
+
+module.exports = RefreshToken;

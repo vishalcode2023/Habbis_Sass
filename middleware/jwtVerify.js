@@ -1,7 +1,7 @@
 // middleware/jwtVerify.js
 const jwt = require("jsonwebtoken");
 const RefreshToken = require("../model/RefreshTokenSchema");
-const { createJwtToken } = require("../Middleware/JwtCreation");
+const { createToken: createJwtToken } = require("../Middleware/JwtCreation");
 
 const ROLES = ["admin", "billing"];
 
@@ -30,7 +30,9 @@ const jwtVerify = async (req, res, next) => {
     // ── 2. CHECK REFRESH TOKEN COOKIE ────────────────────────────
     const refreshToken = req.cookies.refreshToken;
     if (!refreshToken) {
-      return res.status(401).json({ message: "Authentication required. Please login." });
+      return res
+        .status(401)
+        .json({ message: "Authentication required. Please login." });
     }
 
     // ── 3. FIND IN DB ────────────────────────────────────────────
@@ -38,7 +40,9 @@ const jwtVerify = async (req, res, next) => {
     if (!storedRefresh) {
       res.clearCookie("accessToken");
       res.clearCookie("refreshToken");
-      return res.status(403).json({ message: "Refresh token invalid or revoked" });
+      return res
+        .status(403)
+        .json({ message: "Refresh token invalid or revoked" });
     }
 
     // ── 4. CHECK isValid() (revoked + expiry) ────────────────────
@@ -46,34 +50,28 @@ const jwtVerify = async (req, res, next) => {
       await RefreshToken.deleteOne({ _id: storedRefresh._id });
       res.clearCookie("accessToken");
       res.clearCookie("refreshToken");
-      return res.status(403).json({ message: "Refresh token expired or revoked" });
+      return res
+        .status(403)
+        .json({ message: "Refresh token expired or revoked" });
     }
 
-    // ── 5. VERIFY SIGNATURE ──────────────────────────────────────
-    let decoded;
-    try {
-      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    } catch (err) {
-      await RefreshToken.deleteOne({ _id: storedRefresh._id });
-      res.clearCookie("accessToken");
-      res.clearCookie("refreshToken");
-      return res.status(403).json({ message: "Refresh token verification failed" });
-    }
+    // ── 5. READ USER DATA FROM DB RECORD ─────────────────────────
+    // Refresh token is an opaque hex string (not a JWT).
+    // The userId and role are stored in the DB record — no jwt.verify needed.
+    const payload = { id: storedRefresh.userId, role: storedRefresh.role };
 
     // ── 6. VALIDATE ROLE ─────────────────────────────────────────
-    if (!ROLES.includes(decoded.role)) {
+    if (!ROLES.includes(payload.role)) {
       return res.status(403).json({ message: "Invalid role in token" });
     }
-
-    const payload = { id: decoded.id, role: decoded.role };
 
     // ── 7. ISSUE NEW ACCESS TOKEN ────────────────────────────────
     const newAccessToken = createJwtToken(payload);
     res.cookie("accessToken", newAccessToken, {
       httpOnly: true,
-      secure:   process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      maxAge:   15 * 60 * 1000,
+      maxAge: 15 * 60 * 1000,
     });
 
     req.user = payload;

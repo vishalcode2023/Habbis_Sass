@@ -13,6 +13,10 @@ const {
   categoryBreakdown,
   paymentBreakdown,
   dashboard,
+  exportSalesReport,
+  exportTallyReport,
+  staffReport,
+  exportStaffReport,
 } = require("../controller/Analyticscontroller");
 
 router.use(jwtVerify);
@@ -29,5 +33,13 @@ router.get("/slow-moving", slowMovingProducts); // ?days=30&limit=10
 router.get("/reminders", lowStockReminders); // ?threshold=5
 router.get("/by-category", categoryBreakdown); // ?period=month
 router.get("/by-payment", paymentBreakdown); // ?period=month
+
+// Exports
+router.get("/export/sales", exportSalesReport); // ?period=month  → .xlsx download
+router.get("/export/tally", exportTallyReport); // ?period=month  → .xlsx download
+
+// Staff
+router.get("/staff", staffReport);
+router.get("/export/staff", exportStaffReport);
 
 module.exports = router;

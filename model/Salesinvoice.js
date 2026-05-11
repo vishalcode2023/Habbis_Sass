@@ -74,6 +74,7 @@ const salesInvoiceSchema = new mongoose.Schema(
       enum: ["COMPLETED", "CANCELLED"],
       default: "COMPLETED",
     },
+    soldBy: { type: String, trim: true },
     notes: { type: String, trim: true },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

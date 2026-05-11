@@ -1,7 +1,7 @@
 // routes/authRoutes.js
 const express = require("express");
 const router = express.Router();
-const jwtVerify = require("../Middleware/jwtVerify");
+const jwtVerify = require("../middleware/jwtVerify");
 const {
   register,
   login,

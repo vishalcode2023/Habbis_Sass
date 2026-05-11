@@ -1,9 +1,9 @@
 const mongoose = require("mongoose");
 const Product = require("../model/Product");
-const PurchaseInvoice = require("../model/PurchaseInvoice");
+const PurchaseInvoice = require("../model/Purchaseinvoice");
 const { adjustStock } = require("./stockController");
-const { success, error } = require("../utils/apiResponse");
-const { getPagination, buildMeta } = require("../utils/pagination");
+const { success, error } = require("../utils/Apiresponse");
+const { getPagination, buildMeta } = require("../utils/Pagination");
 
 // ─── Create Purchase Invoice ──────────────────────────────────────────────────
 
@@ -12,7 +12,14 @@ exports.createInvoice = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { supplierName, invoiceNo, invoiceDate, items, discountAmount = 0, notes } = req.body;
+    const {
+      supplierName,
+      invoiceNo,
+      invoiceDate,
+      items,
+      discountAmount = 0,
+      notes,
+    } = req.body;
 
     // Resolve products and compute amounts
     let subTotal = 0;
@@ -28,7 +35,7 @@ exports.createInvoice = async (req, res) => {
 
       const itemGstPct = item.gstPercent ?? product.gstPercent ?? 0;
       const baseAmount = +(item.quantity * item.unitPrice).toFixed(2);
-      const gstAmount = +(baseAmount * itemGstPct / 100).toFixed(2);
+      const gstAmount = +((baseAmount * itemGstPct) / 100).toFixed(2);
       const totalAmount = +(baseAmount + gstAmount).toFixed(2);
 
       subTotal += baseAmount;
@@ -68,7 +75,7 @@ exports.createInvoice = async (req, res) => {
           invoiceImage,
           notes,
           status: "CONFIRMED",
-          createdBy: req.user._id,
+          createdBy: req.user.id,
         },
       ],
       { session },
@@ -83,7 +90,7 @@ exports.createInvoice = async (req, res) => {
         invoiceNo,
         unitPrice: item.unitPrice,
         note: `Purchase invoice ${invoiceNo}`,
-        userId: req.user._id,
+        userId: req.user.id,
       });
     }
 
@@ -91,7 +98,8 @@ exports.createInvoice = async (req, res) => {
     return success(res, 201, "Purchase invoice created successfully", invoice);
   } catch (err) {
     await session.abortTransaction();
-    if (err.code === 11000) return error(res, 409, "Invoice number already exists");
+    if (err.code === 11000)
+      return error(res, 409, "Invoice number already exists");
     return error(res, 500, err.message);
   } finally {
     session.endSession();
@@ -105,8 +113,10 @@ exports.getAllInvoices = async (req, res) => {
     const { page, limit, skip } = getPagination(req.query);
     const filter = {};
 
-    if (req.query.supplierName) filter.supplierName = new RegExp(req.query.supplierName, "i");
-    if (req.query.invoiceNo) filter.invoiceNo = new RegExp(req.query.invoiceNo, "i");
+    if (req.query.supplierName)
+      filter.supplierName = new RegExp(req.query.supplierName, "i");
+    if (req.query.invoiceNo)
+      filter.invoiceNo = new RegExp(req.query.invoiceNo, "i");
     if (req.query.status) filter.status = req.query.status;
 
     if (req.query.from || req.query.to) {
@@ -125,7 +135,13 @@ exports.getAllInvoices = async (req, res) => {
       PurchaseInvoice.countDocuments(filter),
     ]);
 
-    return success(res, 200, "Invoices fetched", invoices, buildMeta(total, page, limit));
+    return success(
+      res,
+      200,
+      "Invoices fetched",
+      invoices,
+      buildMeta(total, page, limit),
+    );
   } catch (err) {
     return error(res, 500, err.message);
   }
@@ -152,9 +168,12 @@ exports.cancelInvoice = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    const invoice = await PurchaseInvoice.findById(req.params.id).session(session);
+    const invoice = await PurchaseInvoice.findById(req.params.id).session(
+      session,
+    );
     if (!invoice) return error(res, 404, "Invoice not found");
-    if (invoice.status === "CANCELLED") return error(res, 400, "Invoice already cancelled");
+    if (invoice.status === "CANCELLED")
+      return error(res, 400, "Invoice already cancelled");
 
     invoice.status = "CANCELLED";
     await invoice.save({ session });
@@ -167,7 +186,7 @@ exports.cancelInvoice = async (req, res) => {
         quantity: item.quantity,
         invoiceNo: invoice.invoiceNo,
         note: `Reversal: cancelled invoice ${invoice.invoiceNo}`,
-        userId: req.user._id,
+        userId: req.user.id,
       });
     }
 

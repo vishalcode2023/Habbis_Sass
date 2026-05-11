@@ -1,11 +1,11 @@
 const mongoose = require("mongoose");
 const XLSX = require("xlsx");
 const Product = require("../model/Product");
-const StockLedger = require("../model/StockLedger");
-const { success, error } = require("../utils/apiResponse");
-const { getPagination, buildMeta } = require("../utils/pagination");
-const { generateBarcode } = require("../Barcode/BarcodeImageGenerator");
-const { cloudinary } = require("../config/cloudinary");
+const StockLedger = require("../model/Stockledger");
+const { success, error } = require("../utils/Apiresponse");
+const { getPagination, buildMeta } = require("../utils/Pagination");
+const { generateBarcode } = require("../Barcode/Barcodegenerator");
+const { cloudinary } = require("../config/Cloudinary");
 const {
   generateAndUploadBarcode,
   deleteBarcodeImages,
@@ -121,7 +121,7 @@ exports.addProduct = async (req, res) => {
     const product = await Product.create({
       ...body,
       images,
-      createdBy: req.user._id,
+      createdBy: req.user.id,
     });
 
     // Generate & upload EAN-13 barcode image + QR code (async, non-blocking)
@@ -275,39 +275,31 @@ exports.deleteProductImage = async (req, res) => {
 // ─── Bulk Insert Products ─────────────────────────────────────────────────────
 
 exports.bulkInsertProducts = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const { products } = req.body;
 
     const prepared = products.map((p) => ({
       ...p,
       barcode: generateBarcode(),
-      createdBy: req.user._id,
+      createdBy: req.user.id,
     }));
 
-    const inserted = await Product.insertMany(prepared, {
-      session,
-      ordered: false,
-    });
+    const inserted = await Product.insertMany(prepared, { ordered: false });
 
-    await session.commitTransaction();
     return success(res, 201, `${inserted.length} products inserted`, {
       insertedCount: inserted.length,
       products: inserted,
     });
   } catch (err) {
-    await session.abortTransaction();
     if (err.name === "MongoBulkWriteError") {
-      const inserted = err.result?.nInserted || 0;
+      const insertedCount = err.result?.insertedCount || 0;
       const failed = err.writeErrors?.length || 0;
       return error(
         res,
         207,
-        `Partial insert: ${inserted} inserted, ${failed} failed`,
+        `Partial insert: ${insertedCount} inserted, ${failed} failed`,
         {
-          insertedCount: inserted,
+          insertedCount,
           errors: err.writeErrors?.map((e) => ({
             index: e.index,
             message: e.errmsg,
@@ -316,8 +308,6 @@ exports.bulkInsertProducts = async (req, res) => {
       );
     }
     return error(res, 500, err.message);
-  } finally {
-    session.endSession();
   }
 };
 
@@ -442,7 +432,7 @@ exports.excelBulkImport = async (req, res) => {
       supplierName: row.supplierName || "",
       minimumStock: Number(row.minimumStock) || 10,
       barcode: generateBarcode(),
-      createdBy: req.user._id,
+      createdBy: req.user.id,
     }));
 
     const inserted = await Product.insertMany(prepared, { ordered: false });
@@ -784,13 +774,35 @@ exports.billingSearch = async (req, res) => {
       .limit(20)
       .lean({ virtuals: true });
 
-    // If text search returns nothing, fall back to regex
+    // Level 2: regex on productName, supplierName, category
     let results = products;
     if (!results.length) {
       results = await Product.find({
         isActive: true,
-        productName: new RegExp(trimmed, "i"),
+        $or: [
+          { productName: new RegExp(trimmed, "i") },
+          { category: new RegExp(trimmed, "i") },
+          { supplierName: new RegExp(trimmed, "i") },
+          { sku: new RegExp(trimmed, "i") },
+        ],
       })
+        .sort({ productName: 1 })
+        .limit(20)
+        .lean({ virtuals: true });
+    }
+
+    // Level 3: fuzzy — tolerate 1-char typo by replacing each char with "."
+    // e.g. "cutton" → tries /c.tton/i, /cu.ton/i … one matches "cotton"
+    if (!results.length && trimmed.length >= 3) {
+      const fuzzyPatterns = Array.from(trimmed).map((_, i) => {
+        const pat = trimmed.slice(0, i) + "." + trimmed.slice(i + 1);
+        return new RegExp(pat, "i");
+      });
+      const fuzzyFilter = {
+        isActive: true,
+        productName: { $in: fuzzyPatterns },
+      };
+      results = await Product.find(fuzzyFilter)
         .sort({ productName: 1 })
         .limit(20)
         .lean({ virtuals: true });

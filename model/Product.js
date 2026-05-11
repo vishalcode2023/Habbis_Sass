@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { generateBarcode } = require("../utils/barcodeGenerator");
+const { generateBarcode } = require("../Barcode/Barcodegenerator");
 
 // ─── Variant Sub-Schema ──────────────────────────────────────────────────────
 const variantSchema = new mongoose.Schema(
@@ -221,7 +221,8 @@ productSchema.virtual("hasVariants").get(function () {
 
 // ─── Pre-save: auto-generate barcodes ────────────────────────────────────────
 
-productSchema.pre("save", function (next) {
+// Mongoose 9: use async pre-save, no next() callback needed
+productSchema.pre("save", async function () {
   if (!this.barcode) {
     this.barcode = generateBarcode();
   }
@@ -232,7 +233,6 @@ productSchema.pre("save", function (next) {
       }
     });
   }
-  next();
 });
 
 // ─── Indexes ─────────────────────────────────────────────────────────────────

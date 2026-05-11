@@ -1,12 +1,15 @@
 const mongoose = require("mongoose");
 const Product = require("../model/Product");
-const StockLedger = require("../model/StockLedger");
-const { success, error } = require("../utils/apiResponse");
-const { getPagination, buildMeta } = require("../utils/pagination");
+const StockLedger = require("../model/Stockledger");
+const { success, error } = require("../utils/Apiresponse");
+const { getPagination, buildMeta } = require("../utils/Pagination");
 
 // ─── Internal helper: adjust stock + write ledger entry (reusable in invoice) ─
 
-const adjustStock = async (session, { productId, type, quantity, invoiceNo, unitPrice, note, userId }) => {
+const adjustStock = async (
+  session,
+  { productId, type, quantity, invoiceNo, unitPrice, note, userId },
+) => {
   const product = await Product.findById(productId).session(session);
   if (!product) throw new Error(`Product ${productId} not found`);
 
@@ -58,7 +61,7 @@ exports.purchaseStock = async (req, res) => {
       invoiceNo,
       unitPrice,
       note,
-      userId: req.user._id,
+      userId: req.user.id,
     });
 
     await session.commitTransaction();
@@ -70,7 +73,11 @@ exports.purchaseStock = async (req, res) => {
     });
   } catch (err) {
     await session.abortTransaction();
-    const status = err.message.includes("not found") ? 404 : err.message.includes("Insufficient") ? 422 : 500;
+    const status = err.message.includes("not found")
+      ? 404
+      : err.message.includes("Insufficient")
+        ? 422
+        : 500;
     return error(res, status, err.message);
   } finally {
     session.endSession();
@@ -92,7 +99,7 @@ exports.saleStock = async (req, res) => {
       invoiceNo,
       unitPrice,
       note,
-      userId: req.user._id,
+      userId: req.user.id,
     });
 
     await session.commitTransaction();
@@ -104,7 +111,11 @@ exports.saleStock = async (req, res) => {
     });
   } catch (err) {
     await session.abortTransaction();
-    const status = err.message.includes("not found") ? 404 : err.message.includes("Insufficient") ? 422 : 500;
+    const status = err.message.includes("not found")
+      ? 404
+      : err.message.includes("Insufficient")
+        ? 422
+        : 500;
     return error(res, status, err.message);
   } finally {
     session.endSession();
@@ -131,7 +142,11 @@ exports.adjustStockManual = async (req, res) => {
       return error(res, 422, "Adjustment would result in negative stock");
     }
 
-    await Product.findByIdAndUpdate(productId, { $set: { "stock.quantity": newQty } }, { session });
+    await Product.findByIdAndUpdate(
+      productId,
+      { $set: { "stock.quantity": newQty } },
+      { session },
+    );
 
     await StockLedger.create(
       [
@@ -142,7 +157,7 @@ exports.adjustStockManual = async (req, res) => {
           quantityBefore: product.stock.quantity,
           quantityAfter: newQty,
           note,
-          createdBy: req.user._id,
+          createdBy: req.user.id,
         },
       ],
       { session },
@@ -172,7 +187,8 @@ exports.getStockLedger = async (req, res) => {
 
     if (req.query.productId) filter.productId = req.query.productId;
     if (req.query.type) filter.type = req.query.type;
-    if (req.query.invoiceNo) filter.invoiceNo = new RegExp(req.query.invoiceNo, "i");
+    if (req.query.invoiceNo)
+      filter.invoiceNo = new RegExp(req.query.invoiceNo, "i");
 
     if (req.query.from || req.query.to) {
       filter.createdAt = {};
@@ -191,7 +207,13 @@ exports.getStockLedger = async (req, res) => {
       StockLedger.countDocuments(filter),
     ]);
 
-    return success(res, 200, "Stock ledger", ledger, buildMeta(total, page, limit));
+    return success(
+      res,
+      200,
+      "Stock ledger",
+      ledger,
+      buildMeta(total, page, limit),
+    );
   } catch (err) {
     return error(res, 500, err.message);
   }
@@ -214,7 +236,13 @@ exports.getProductLedger = async (req, res) => {
       StockLedger.countDocuments(filter),
     ]);
 
-    return success(res, 200, "Product ledger", ledger, buildMeta(total, page, limit));
+    return success(
+      res,
+      200,
+      "Product ledger",
+      ledger,
+      buildMeta(total, page, limit),
+    );
   } catch (err) {
     return error(res, 500, err.message);
   }
