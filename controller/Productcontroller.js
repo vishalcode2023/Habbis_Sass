@@ -14,7 +14,6 @@ const {
 // ─── Internal: generate barcode images for a product and all its variants ─────
 const attachBarcodeImages = async (product) => {
   try {
-    // Product-level barcode image (always generated)
     if (product.barcode) {
       const label = product.productName;
       const result = await generateAndUploadBarcode(
@@ -26,7 +25,6 @@ const attachBarcodeImages = async (product) => {
       product.qrImage = result.qr;
     }
 
-    // Per-variant barcode images
     if (product.variants && product.variants.length > 0) {
       for (const variant of product.variants) {
         if (variant.barcode) {
@@ -44,7 +42,6 @@ const attachBarcodeImages = async (product) => {
 
     await product.save();
   } catch (err) {
-    // Non-fatal: log but don't crash the request
     console.error("Barcode image generation failed:", err.message);
   }
 };
@@ -60,8 +57,6 @@ const buildSearchFilter = (query) => {
     filter.supplierName = new RegExp(query.supplierName, "i");
   if (query.unitType) filter.unitType = query.unitType;
 
-  // Filter by size — matches products that have this size in availableSizes
-  // OR in any active variant
   if (query.size) {
     filter.$or = [
       { availableSizes: query.size.toUpperCase() },
@@ -69,7 +64,6 @@ const buildSearchFilter = (query) => {
     ];
   }
 
-  // Filter by color
   if (query.color) {
     const colorRegex = new RegExp(query.color, "i");
     filter.$or = filter.$or
@@ -92,7 +86,6 @@ exports.addProduct = async (req, res) => {
       publicId: f.filename,
     }));
 
-    // Parse variants/arrays if sent as JSON strings (multipart/form-data)
     const body = { ...req.body };
     if (typeof body.variants === "string") {
       try {
@@ -124,7 +117,6 @@ exports.addProduct = async (req, res) => {
       createdBy: req.user.id,
     });
 
-    // Generate & upload EAN-13 barcode image + QR code (async, non-blocking)
     attachBarcodeImages(product);
 
     return success(res, 201, "Product created successfully", product);
@@ -215,13 +207,11 @@ exports.updateProduct = async (req, res) => {
       }
     }
 
-    const updatePayload = { ...body };
-
     const product = await Product.findOneAndUpdate(
       { _id: req.params.id, isActive: true },
       newImages.length > 0
-        ? { $set: updatePayload, $push: { images: { $each: newImages } } }
-        : { $set: updatePayload },
+        ? { $set: body, $push: { images: { $each: newImages } } }
+        : { $set: body },
       { new: true, runValidators: true },
     );
 
@@ -258,7 +248,6 @@ exports.deleteProduct = async (req, res) => {
 exports.deleteProductImage = async (req, res) => {
   try {
     const { id, publicId } = req.params;
-
     const product = await Product.findOne({ _id: id, isActive: true });
     if (!product) return error(res, 404, "Product not found");
 
@@ -312,18 +301,15 @@ exports.bulkInsertProducts = async (req, res) => {
 };
 
 // ─── Barcode Scan Search ──────────────────────────────────────────────────────
-// Searches both product-level barcode AND variant-level barcodes
 
 exports.searchByBarcode = async (req, res) => {
   try {
     const { barcode } = req.params;
 
-    // Try product-level barcode first
     let product = await Product.findOne({ barcode, isActive: true });
     let matchedVariant = null;
 
     if (!product) {
-      // Try variant-level barcode
       product = await Product.findOne({
         "variants.barcode": barcode,
         isActive: true,
@@ -409,7 +395,6 @@ exports.excelBulkImport = async (req, res) => {
       sku: row.sku ? String(row.sku).toUpperCase() : undefined,
       hsnCode: row.hsnCode ? String(row.hsnCode) : "",
       unitType: row.unitType || "PCS",
-      // Parse sizes/colors if provided as comma-separated values in Excel
       availableSizes: row.sizes
         ? String(row.sizes)
             .split(",")
@@ -495,7 +480,7 @@ exports.getColors = async (req, res) => {
   }
 };
 
-// ─── Add Variants to an existing product ─────────────────────────────────────
+// ─── Add Variants ─────────────────────────────────────────────────────────────
 
 exports.addVariants = async (req, res) => {
   try {
@@ -507,7 +492,6 @@ exports.addVariants = async (req, res) => {
 
     const { variants } = req.body;
 
-    // Check for duplicate size+color combos within the product
     for (const newV of variants) {
       const exists = product.variants.some(
         (v) =>
@@ -526,7 +510,6 @@ exports.addVariants = async (req, res) => {
 
     product.variants.push(...variants);
 
-    // Sync availableSizes / availableColors master lists
     const newSizes = variants.map((v) => v.size).filter(Boolean);
     const newColors = variants.map((v) => v.color).filter(Boolean);
     product.availableSizes = [
@@ -537,8 +520,6 @@ exports.addVariants = async (req, res) => {
     ];
 
     await product.save();
-
-    // Generate barcode images for newly added variants (async, non-blocking)
     attachBarcodeImages(product);
 
     return success(res, 201, "Variants added", product);
@@ -554,7 +535,6 @@ exports.addVariants = async (req, res) => {
 exports.updateVariant = async (req, res) => {
   try {
     const { id, variantId } = req.params;
-
     const product = await Product.findOne({ _id: id, isActive: true });
     if (!product) return error(res, 404, "Product not found");
 
@@ -563,7 +543,6 @@ exports.updateVariant = async (req, res) => {
 
     Object.assign(variant, req.body);
 
-    // Re-sync master lists after update
     const allActive = product.variants.filter((v) => v.isActive);
     product.availableSizes = [
       ...new Set(allActive.map((v) => v.size).filter(Boolean)),
@@ -586,7 +565,6 @@ exports.updateVariant = async (req, res) => {
 exports.deleteVariant = async (req, res) => {
   try {
     const { id, variantId } = req.params;
-
     const product = await Product.findOne({ _id: id, isActive: true });
     if (!product) return error(res, 404, "Product not found");
 
@@ -595,7 +573,6 @@ exports.deleteVariant = async (req, res) => {
 
     variant.isActive = false;
 
-    // Re-sync master lists
     const allActive = product.variants.filter((v) => v.isActive);
     product.availableSizes = [
       ...new Set(allActive.map((v) => v.size).filter(Boolean)),
@@ -611,8 +588,7 @@ exports.deleteVariant = async (req, res) => {
   }
 };
 
-// ─── Regenerate barcode images for a product (and its variants) ───────────────
-// Useful if Cloudinary images were deleted or generation failed on create.
+// ─── Regenerate barcode images ────────────────────────────────────────────────
 
 exports.regenerateBarcodeImages = async (req, res) => {
   try {
@@ -622,7 +598,6 @@ exports.regenerateBarcodeImages = async (req, res) => {
     });
     if (!product) return error(res, 404, "Product not found");
 
-    // Delete old barcode images from Cloudinary before regenerating
     await deleteBarcodeImages(
       product.barcodeImage?.publicId,
       product.qrImage?.publicId,
@@ -631,7 +606,6 @@ exports.regenerateBarcodeImages = async (req, res) => {
       await deleteBarcodeImages(v.barcodeImage?.publicId, v.qrImage?.publicId);
     }
 
-    // Re-generate product-level barcode
     if (product.barcode) {
       const result = await generateAndUploadBarcode(
         product.barcode,
@@ -642,7 +616,6 @@ exports.regenerateBarcodeImages = async (req, res) => {
       product.qrImage = result.qr;
     }
 
-    // Re-generate variant barcodes
     for (const variant of product.variants || []) {
       if (variant.barcode && variant.isActive) {
         const label = [product.productName, variant.size, variant.color]
@@ -665,8 +638,7 @@ exports.regenerateBarcodeImages = async (req, res) => {
   }
 };
 
-// ─── Get barcode image URLs for a product (and all its variants) ──────────────
-// Used by billing software to display / print barcodes.
+// ─── Get barcode image URLs ───────────────────────────────────────────────────
 
 exports.getBarcodeImages = async (req, res) => {
   try {
@@ -679,7 +651,7 @@ exports.getBarcodeImages = async (req, res) => {
 
     if (!product) return error(res, 404, "Product not found");
 
-    const response = {
+    return success(res, 200, "Barcode images", {
       productId: product._id,
       productName: product.productName,
       barcode: product.barcode,
@@ -696,23 +668,23 @@ exports.getBarcodeImages = async (req, res) => {
           barcodeImage: v.barcodeImage,
           qrImage: v.qrImage,
         })),
-    };
-
-    return success(res, 200, "Barcode images", response);
+    });
   } catch (err) {
     return error(res, 500, err.message);
   }
 };
 
 // ─── Billing Search ───────────────────────────────────────────────────────────
-// GET /api/products/billing/search?q=shirt        → search by name
-// GET /api/products/billing/search?barcode=123456 → scan barcode
+// GET /api/products/billing/search?q=An      → name search (regex, no $text)
+// GET /api/products/billing/search?barcode=… → exact barcode scan
 //
-// Response shape (same for both modes):
-// { products: [ { productId, productName, category, unitType, gstPercent,
-//                 hasVariants, sellingPrice, stock,
-//                 variants: [{ variantId, size, color, colorCode, barcode, sellingPrice, stock }],
-//                 barcode, sku } ] }
+// FIX: The old code used `$text` for ALL queries including short ones like "An".
+// MongoDB's $text index requires a minimum of 2–3 characters AND only matches
+// whole words, so "An" would never match "ANARKALI". We now use:
+//   • Short queries (< 3 chars) : pure regex on productName only
+//   • Longer queries            : regex across name + category + supplier + sku
+//                                 with optional $text fallback for relevance sort
+//   • Fuzzy fallback remains for longer mistyped queries
 
 exports.billingSearch = async (req, res) => {
   try {
@@ -731,7 +703,6 @@ exports.billingSearch = async (req, res) => {
       let matchedVariant = null;
 
       if (!product) {
-        // Try variant-level barcode
         product = await Product.findOne({
           "variants.barcode": barcode.trim(),
           isActive: true,
@@ -754,55 +725,56 @@ exports.billingSearch = async (req, res) => {
       return success(res, 200, "Product found", { products: [shaped] });
     }
 
-    // ── Name / text search mode ───────────────────────────────────────────────
+    // ── Name search mode ──────────────────────────────────────────────────────
     const trimmed = q.trim();
-    if (trimmed.length < 1) return error(res, 400, "Search term too short");
+    if (!trimmed.length) return error(res, 400, "Search term cannot be empty");
 
-    // Use text index if available, fallback to regex
-    let filter = { isActive: true };
-    const hasTextIndex = true; // productSchema has text index on productName, supplierName, category
-    if (hasTextIndex) {
-      filter.$text = { $search: trimmed };
-    } else {
-      filter.productName = new RegExp(trimmed, "i");
-    }
+    // ── Level 1: Regex search (works for any length, including 1–2 chars) ────
+    // This replaces the broken `$text` approach for short queries.
+    // Regex on productName catches "An" → "ANARKALI SUIT PREMIUM" instantly.
+    const regexQ = new RegExp(trimmed, "i");
 
-    const products = await Product.find(filter)
-      .sort(
-        hasTextIndex ? { score: { $meta: "textScore" } } : { productName: 1 },
-      )
+    let results = await Product.find({
+      isActive: true,
+      $or: [
+        { productName: regexQ },
+        { category: regexQ },
+        { supplierName: regexQ },
+        { sku: regexQ },
+        { barcode: regexQ },
+      ],
+    })
+      .sort({ productName: 1 })
       .limit(20)
       .lean({ virtuals: true });
 
-    // Level 2: regex on productName, supplierName, category
-    let results = products;
-    if (!results.length) {
-      results = await Product.find({
-        isActive: true,
-        $or: [
-          { productName: new RegExp(trimmed, "i") },
-          { category: new RegExp(trimmed, "i") },
-          { supplierName: new RegExp(trimmed, "i") },
-          { sku: new RegExp(trimmed, "i") },
-        ],
-      })
-        .sort({ productName: 1 })
-        .limit(20)
-        .lean({ virtuals: true });
+    // ── Level 2: $text search for longer queries (better relevance ranking) ──
+    // Only attempt $text if regex returned nothing AND query is long enough
+    // for MongoDB's text index (minimum ~3 meaningful chars, whole words).
+    if (!results.length && trimmed.length >= 3) {
+      try {
+        results = await Product.find({
+          isActive: true,
+          $text: { $search: trimmed },
+        })
+          .sort({ score: { $meta: "textScore" } })
+          .limit(20)
+          .lean({ virtuals: true });
+      } catch (_) {
+        // $text index may not exist — silently ignore and fall through to fuzzy
+      }
     }
 
-    // Level 3: fuzzy — tolerate 1-char typo by replacing each char with "."
-    // e.g. "cutton" → tries /c.tton/i, /cu.ton/i … one matches "cotton"
+    // ── Level 3: Fuzzy — tolerate 1-char typo (only for 3+ char queries) ────
     if (!results.length && trimmed.length >= 3) {
       const fuzzyPatterns = Array.from(trimmed).map((_, i) => {
         const pat = trimmed.slice(0, i) + "." + trimmed.slice(i + 1);
         return new RegExp(pat, "i");
       });
-      const fuzzyFilter = {
+      results = await Product.find({
         isActive: true,
         productName: { $in: fuzzyPatterns },
-      };
-      results = await Product.find(fuzzyFilter)
+      })
         .sort({ productName: 1 })
         .limit(20)
         .lean({ virtuals: true });
@@ -831,13 +803,11 @@ function shapeBillingProduct(p) {
     gstPercent: p.gstPercent,
     hsnCode: p.hsnCode,
     hasVariants: !!(p.variants && p.variants.length),
-    // Product-level pricing & stock (used when no variants)
     sellingPrice: p.pricing?.sellingPrice,
     wholesalePrice: p.pricing?.wholesalePrice,
     purchasePrice: p.pricing?.purchasePrice,
     stock: p.stock?.quantity ?? 0,
     minimumStock: p.minimumStock,
-    // Active variants only
     variants: (p.variants || []).filter((v) => v.isActive).map(shapeVariant),
   };
 }
