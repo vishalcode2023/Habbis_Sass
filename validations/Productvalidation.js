@@ -1,144 +1,153 @@
 const Joi = require("joi");
 
-// ─── Variant schema ───────────────────────────────────────────────────────────
+// ─── Reusable sub-schemas ─────────────────────────────────────────────────────
+
+const pricingSchema = Joi.object({
+  purchasePrice: Joi.number().min(0).required(),
+  sellingPrice: Joi.number().min(0).required(),
+  wholesalePrice: Joi.number().min(0).optional(),
+});
+
+const stockSchema = Joi.object({
+  quantity: Joi.number().min(0).default(0),
+});
+
 const variantSchema = Joi.object({
-  size: Joi.string().trim().uppercase().max(30).optional().allow(""),
-  color: Joi.string().trim().max(50).optional().allow(""),
+  size: Joi.string().uppercase().optional().allow(""),
+  color: Joi.string().optional().allow(""),
   colorCode: Joi.string()
-    .trim()
     .pattern(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/)
     .optional()
-    .allow("")
-    .messages({
-      "string.pattern.base": "colorCode must be a valid hex e.g. #FF0000",
-    }),
-  sku: Joi.string().trim().uppercase().max(50).optional().allow(""),
-  barcode: Joi.string().trim().optional().allow(""),
-  stock: Joi.object({
-    quantity: Joi.number().min(0).default(0),
-  }).optional(),
+    .allow(""),
+  stock: stockSchema.optional(),
   pricing: Joi.object({
     purchasePrice: Joi.number().min(0).optional(),
     sellingPrice: Joi.number().min(0).optional(),
     wholesalePrice: Joi.number().min(0).optional(),
   }).optional(),
-  isActive: Joi.boolean().default(true),
 });
 
-// ─── Product schema ───────────────────────────────────────────────────────────
+// ─── Add Product ──────────────────────────────────────────────────────────────
+
 const productSchema = Joi.object({
-  productName: Joi.string().trim().min(2).max(150).required().messages({
-    "any.required": "Product name is required",
-    "string.min": "Product name must be at least 2 characters",
-  }),
-  category: Joi.string().trim().min(2).max(80).required().messages({
-    "any.required": "Category is required",
-  }),
-  subCategory: Joi.string().trim().max(80).optional().allow(""),
-  sku: Joi.string().trim().uppercase().max(50).optional().allow(""),
-  hsnCode: Joi.string().trim().max(20).optional().allow(""),
+  productName: Joi.string().trim().required(),
+  category: Joi.string().trim().required(),
+  subCategory: Joi.string().trim().optional().allow(""),
+  sku: Joi.string().trim().uppercase().optional().allow(""),
+  hsnCode: Joi.string().trim().optional().allow(""),
   unitType: Joi.string().valid("PCS", "MTR", "CUT", "ROLL").default("PCS"),
-
-  // Size & Color master lists
-  availableSizes: Joi.array()
-    .items(Joi.string().trim().uppercase().max(30))
-    .optional()
-    .messages({ "array.base": "availableSizes must be an array of strings" }),
-  availableColors: Joi.array()
-    .items(Joi.string().trim().max(50))
-    .optional()
-    .messages({ "array.base": "availableColors must be an array of strings" }),
-
-  // Variants
-  variants: Joi.array().items(variantSchema).optional(),
-
-  // Product-level stock (ignored when variants are used)
-  stock: Joi.object({
-    quantity: Joi.number().min(0).default(0),
-  }).optional(),
-
-  // Product-level pricing (required — acts as default for variants too)
-  pricing: Joi.object({
-    purchasePrice: Joi.number().min(0).required().messages({
-      "any.required": "Purchase price is required",
-    }),
-    sellingPrice: Joi.number().min(0).required().messages({
-      "any.required": "Selling price is required",
-    }),
-    wholesalePrice: Joi.number().min(0).optional(),
-  }).required(),
-
   gstPercent: Joi.number().valid(0, 5, 12, 18, 28).default(5),
-  supplierName: Joi.string().trim().max(150).optional().allow(""),
+  supplierName: Joi.string().trim().optional().allow(""),
   minimumStock: Joi.number().min(0).default(10),
+
+  // Nested objects (already parsed by parseProductBody middleware)
+  pricing: pricingSchema.required(),
+  stock: stockSchema.optional(),
+
+  // Variant-related arrays
+  availableSizes: Joi.array()
+    .items(Joi.string().uppercase())
+    .optional()
+    .default([]),
+  availableColors: Joi.array().items(Joi.string()).optional().default([]),
+  variants: Joi.array().items(variantSchema).optional().default([]),
 });
 
-const updateProductSchema = productSchema.fork(
-  ["productName", "category", "pricing"],
-  (field) => field.optional(),
-);
+// ─── Update Product ───────────────────────────────────────────────────────────
+
+const updateProductSchema = Joi.object({
+  productName: Joi.string().trim().optional(),
+  category: Joi.string().trim().optional(),
+  subCategory: Joi.string().trim().optional().allow(""),
+  sku: Joi.string().trim().uppercase().optional().allow(""),
+  hsnCode: Joi.string().trim().optional().allow(""),
+  unitType: Joi.string().valid("PCS", "MTR", "CUT", "ROLL").optional(),
+  gstPercent: Joi.number().valid(0, 5, 12, 18, 28).optional(),
+  supplierName: Joi.string().trim().optional().allow(""),
+  minimumStock: Joi.number().min(0).optional(),
+
+  pricing: Joi.object({
+    purchasePrice: Joi.number().min(0).optional(),
+    sellingPrice: Joi.number().min(0).optional(),
+    wholesalePrice: Joi.number().min(0).optional(),
+  }).optional(),
+  stock: stockSchema.optional(),
+
+  availableSizes: Joi.array().items(Joi.string().uppercase()).optional(),
+  availableColors: Joi.array().items(Joi.string()).optional(),
+  variants: Joi.array().items(variantSchema).optional(),
+});
+
+// ─── Bulk Insert ──────────────────────────────────────────────────────────────
 
 const bulkProductSchema = Joi.object({
   products: Joi.array()
-    .items(productSchema)
+    .items(
+      Joi.object({
+        productName: Joi.string().trim().required(),
+        category: Joi.string().trim().required(),
+        subCategory: Joi.string().trim().optional().allow(""),
+        sku: Joi.string().trim().uppercase().optional().allow(""),
+        hsnCode: Joi.string().trim().optional().allow(""),
+        unitType: Joi.string()
+          .valid("PCS", "MTR", "CUT", "ROLL")
+          .default("PCS"),
+        gstPercent: Joi.number().valid(0, 5, 12, 18, 28).default(5),
+        supplierName: Joi.string().trim().optional().allow(""),
+        minimumStock: Joi.number().min(0).default(10),
+        pricing: pricingSchema.required(),
+        stock: stockSchema.optional(),
+        availableSizes: Joi.array()
+          .items(Joi.string().uppercase())
+          .optional()
+          .default([]),
+        availableColors: Joi.array().items(Joi.string()).optional().default([]),
+        variants: Joi.array().items(variantSchema).optional().default([]),
+      }),
+    )
     .min(1)
-    .max(500)
-    .required()
-    .messages({
-      "any.required": "products array is required",
-      "array.min": "At least one product is required",
-      "array.max": "Cannot insert more than 500 products at once",
-    }),
+    .required(),
 });
 
-const stockOperationSchema = Joi.object({
-  productId: Joi.string().hex().length(24).required().messages({
-    "any.required": "Product ID is required",
-  }),
-  variantId: Joi.string().hex().length(24).optional().messages({
-    "string.hex": "variantId must be a valid ObjectId",
-  }),
-  quantity: Joi.number().integer().min(1).required().messages({
-    "any.required": "Quantity is required",
-    "number.min": "Quantity must be at least 1",
-  }),
-  invoiceNo: Joi.string().trim().max(50).optional().allow(""),
-  unitPrice: Joi.number().min(0).optional(),
-  note: Joi.string().trim().max(255).optional().allow(""),
-});
+// ─── Pagination ───────────────────────────────────────────────────────────────
 
 const paginationSchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
-  search: Joi.string().trim().max(100).optional().allow(""),
+  limit: Joi.number().integer().min(1).max(100).default(15),
+  search: Joi.string().trim().optional().allow(""),
   category: Joi.string().trim().optional().allow(""),
-  supplierName: Joi.string().trim().optional().allow(""),
-  unitType: Joi.string().valid("PCS", "MTR", "CUT", "ROLL").optional(),
-  size: Joi.string().trim().uppercase().optional().allow(""),
-  color: Joi.string().trim().optional().allow(""),
-  sortBy: Joi.string()
-    .valid("productName", "createdAt", "stock.quantity", "pricing.sellingPrice")
-    .default("createdAt"),
+  sortBy: Joi.string().optional().allow(""),
   sortOrder: Joi.string().valid("asc", "desc").default("desc"),
 });
 
-// ─── Variant add/update schemas ───────────────────────────────────────────────
+// ─── Add Variants ─────────────────────────────────────────────────────────────
+
 const addVariantSchema = Joi.object({
-  variants: Joi.array().items(variantSchema).min(1).required().messages({
-    "any.required": "variants array is required",
-    "array.min": "At least one variant is required",
-  }),
+  variants: Joi.array().items(variantSchema).min(1).required(),
 });
 
-const updateVariantSchema = variantSchema.fork(["size", "color"], (field) =>
-  field.optional(),
-);
+// ─── Update Variant ───────────────────────────────────────────────────────────
+
+const updateVariantSchema = Joi.object({
+  size: Joi.string().uppercase().optional().allow(""),
+  color: Joi.string().optional().allow(""),
+  colorCode: Joi.string()
+    .pattern(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/)
+    .optional()
+    .allow(""),
+  stock: stockSchema.optional(),
+  pricing: Joi.object({
+    purchasePrice: Joi.number().min(0).optional(),
+    sellingPrice: Joi.number().min(0).optional(),
+    wholesalePrice: Joi.number().min(0).optional(),
+  }).optional(),
+  isActive: Joi.boolean().optional(),
+});
 
 module.exports = {
   productSchema,
   updateProductSchema,
   bulkProductSchema,
-  stockOperationSchema,
   paginationSchema,
   addVariantSchema,
   updateVariantSchema,

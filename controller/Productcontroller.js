@@ -87,6 +87,8 @@ exports.addProduct = async (req, res) => {
     }));
 
     const body = { ...req.body };
+
+    // ── Parse all stringified fields from FormData ──
     if (typeof body.variants === "string") {
       try {
         body.variants = JSON.parse(body.variants);
@@ -109,6 +111,18 @@ exports.addProduct = async (req, res) => {
           .split(",")
           .map((s) => s.trim());
       }
+    }
+
+    // ✅ ADD THESE TWO — this is what was missing
+    if (typeof body.pricing === "string") {
+      try {
+        body.pricing = JSON.parse(body.pricing);
+      } catch (_) {}
+    }
+    if (typeof body.stock === "string") {
+      try {
+        body.stock = JSON.parse(body.stock);
+      } catch (_) {}
     }
 
     const product = await Product.create({

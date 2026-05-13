@@ -71,7 +71,7 @@ const salesInvoiceSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["COMPLETED", "CANCELLED"],
+      enum: ["COMPLETED", "CANCELLED", "RETURNED", "PARTIALLY_RETURNED"], // ✅ add these two
       default: "COMPLETED",
     },
     soldBy: { type: String, trim: true },

@@ -37,10 +37,48 @@ const {
   billingSearch,
 } = require("../controller/Productcontroller");
 
+// ✅ ADD THIS MIDDLEWARE — parses JSON strings from FormData before Joi validates
+const parseProductBody = (req, res, next) => {
+  try {
+    if (typeof req.body.pricing === "string") {
+      req.body.pricing = JSON.parse(req.body.pricing);
+    }
+    if (typeof req.body.stock === "string") {
+      req.body.stock = JSON.parse(req.body.stock);
+    }
+    if (typeof req.body.variants === "string") {
+      req.body.variants = JSON.parse(req.body.variants);
+    }
+    if (typeof req.body.availableSizes === "string") {
+      try {
+        req.body.availableSizes = JSON.parse(req.body.availableSizes);
+      } catch {
+        req.body.availableSizes = req.body.availableSizes
+          .split(",")
+          .map((s) => s.trim().toUpperCase());
+      }
+    }
+    if (typeof req.body.availableColors === "string") {
+      try {
+        req.body.availableColors = JSON.parse(req.body.availableColors);
+      } catch {
+        req.body.availableColors = req.body.availableColors
+          .split(",")
+          .map((s) => s.trim());
+      }
+    }
+    next();
+  } catch (err) {
+    return res
+      .status(400)
+      .json({ message: "Invalid JSON in body: " + err.message });
+  }
+};
+
 // All routes require authentication
 router.use(jwtVerify);
 
-// ─── Billing search (name + barcode in one endpoint) ─────────────────────────
+// ─── Billing search ───────────────────────────────────────────────────────────
 router.get("/billing/search", billingOrAdmin, billingSearch);
 
 // ─── Utility / filter routes ──────────────────────────────────────────────────
@@ -69,9 +107,11 @@ router.post(
   "/",
   adminOnly,
   uploadProductImages,
-  validate(productSchema),
-  addProduct,
+  parseProductBody, // ✅ step 1: parse strings
+  validate(productSchema), // ✅ step 2: now Joi sees real objects
+  addProduct, // ✅ step 3: controller
 );
+
 router.get(
   "/",
   billingOrAdmin,
@@ -79,13 +119,16 @@ router.get(
   getAllProducts,
 );
 router.get("/:id", billingOrAdmin, getProduct);
+
 router.put(
   "/:id",
   adminOnly,
   uploadProductImages,
+  parseProductBody, // ✅ same fix for update
   validate(updateProductSchema),
   updateProduct,
 );
+
 router.delete("/:id", adminOnly, deleteProduct);
 
 // ─── Image management ─────────────────────────────────────────────────────────
@@ -107,8 +150,6 @@ router.put(
 router.delete("/:id/variants/:variantId", adminOnly, deleteVariant);
 
 // ─── Barcode image routes ─────────────────────────────────────────────────────
-// GET  /api/products/:id/barcodes          → fetch all barcode image URLs
-// POST /api/products/:id/barcodes/regenerate → re-generate & re-upload images
 router.get("/:id/barcodes", billingOrAdmin, getBarcodeImages);
 router.post("/:id/barcodes/regenerate", adminOnly, regenerateBarcodeImages);
 

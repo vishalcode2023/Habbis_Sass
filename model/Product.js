@@ -235,6 +235,8 @@ productSchema.pre("save", async function () {
   }
 });
 
+
+
 // ─── Indexes ─────────────────────────────────────────────────────────────────
 
 productSchema.index({
